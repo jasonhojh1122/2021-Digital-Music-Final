@@ -6,10 +6,29 @@ let colorBase = [
         [186, 23, 35],
         [5, 78, 85],
         [90, 3, 85]
+    ],
+    [
+        [338, 333, 45],
+        [344, 33, 75],
+        [208, 20, 85],
+        [349, 22, 97]
+    ],
+    [
+        [84, 69, 20],
+        [73, 70, 35],
+        [22, 69, 70],
+        [67, 39, 80]
+    ],
+    [
+        [0, 0, 90],
+        [0, 0, 65],
+        [0, 0, 5],
+        [0, 0, 10]
     ]
 ];
 
-let colorSet = colorBase[0];
+let colorSet = colorBase[ Math.floor(Math.random() * colorBase.length) ];
+let C_DARK = 0, C_LIGHT = 1, C_CAN = 2, C_RAIN = 3;
 let cam;
 let bg;
 
@@ -20,10 +39,15 @@ let circlePoints = [];
 let ground;
 let groundSize;
 
+let canRes = 100;
+let canMinCnt = 3;
+let canMaxCnt = 15
 let cans = [];
 
 let rainCnt = 1000;
 let rainStartY;
+
+let splashRes = 5;
 let splashTime = 500;
 
 let rains = [];
@@ -36,8 +60,8 @@ class Ground {
     }
 
     init = () => {
-        this.graphics.background(colorSet[0]);
-        this.graphics.fill(colorSet[1]);
+        this.graphics.background(colorSet[C_DARK]);
+        this.graphics.fill(colorSet[C_LIGHT]);
         this.graphics.noStroke();
         for (let i = 0; i < 15000; i++) {
             let s1 = random(groundSize/100, groundSize/25);
@@ -47,7 +71,7 @@ class Ground {
             this.graphics.rect(x, z, s1, s2);
         }
         this.graphics.noFill();
-        this.graphics.stroke(colorSet[0]);
+        this.graphics.stroke(colorSet[C_DARK]);
         this.graphics.strokeWeight(0.6);
         for (let i = 0; i < 5000; i++) {
             let s = random(groundSize/50, groundSize/5);
@@ -91,7 +115,7 @@ class Can {
     }
 
     init = () => {
-        for (let i = 0; i < 100; i++) {
+        for (let i = 0; i < canRes; i++) {
             let sp = Math.floor(random(0, circleRes));
             let ep = Math.floor(random(0, circleRes));
             this.strokes.push({
@@ -105,7 +129,7 @@ class Can {
     }
 
     draw = () => {
-        stroke(colorSet[2]);
+        stroke(colorSet[C_CAN]);
         noFill();
         for (let i = 0; i < this.strokes.length; i++) {
             beginShape();
@@ -130,11 +154,10 @@ class Can {
 class Rain {
     waterWave; splash;
     startT;
-    raining; splashing;
+    raining; splashing; waving;
     x; y; z; speed; len;
     constructor(startT) {
         this.startT = startT;
-        this.splashing = false;
         this.init();
         this.waterWave = new WaterWave();
         this.splash = new Splash(this.onSplashEndCallback);
@@ -142,7 +165,7 @@ class Rain {
 
     draw = () => {
         if (this.raining) {
-            stroke(colorSet[3]);
+            stroke(colorSet[C_RAIN]);
             line(this.x, this.y, this.z, this.x, this.y - this.len, this.z);
             this.y += (millis() - this.lastT) * this.speed / 1000;
             this.lastT = millis();
@@ -150,6 +173,9 @@ class Rain {
         }
         else if (this.splashing) {
             this.splash.draw();
+            if (this.waving) {
+                this.waterWave.draw();
+            }
         }
         else {
             this.init();
@@ -165,11 +191,14 @@ class Rain {
         this.lastT = millis();
         this.raining = true;
         this.splashing = false;
+        this.waving = false;
     }
 
     checkCollision = () => {
         if (this.y >= 0) {
             this.onCollision();
+            this.waving = true;
+            this.waterWave.init(this.x, this.z);
             return;
         }
         for (let i = 0; i < cans.length; i++) {
@@ -193,15 +222,15 @@ class Rain {
 }
 
 class Splash {
-    direction; range;
+    direction; radius;
     x; y; z; h; startT;
     endCallback;
     constructor(endCallback) {
         this.direction = [];
-        for (let i = 0; i < 5; i++) {
+        for (let i = 0; i < splashRes; i++) {
             this.direction.push([random(-1, 1), random(-1, 1)]);
         }
-        this.range = random(groundSize / 100, groundSize / 50);
+        this.radius = random(groundSize / 100, groundSize / 50);
         this.h = random(groundSize / 100, groundSize / 50);
         this.endCallback = endCallback;
         this.init(0);
@@ -216,15 +245,14 @@ class Splash {
 
     draw = () => {
         let p = (millis() - this.startT) / splashTime;
-        let r = lerp(0, this.range, p);
+        let r = lerp(0, this.radius, p);
         let y = lerp(this.y, this.y-this.h, p);
         for (let i = 0; i < this.direction.length; i++) {
-            fill(colorSet[3]);
+            fill(colorSet[C_RAIN]);
             noStroke();
-            let s = this.direction[i] * r;
             push();
             translate(this.x + this.direction[i][0] * r, y, this.z + this.direction[i][1] * r);
-            sphere(canvasSize / 150);
+            sphere(canvasSize / 150, 3, 3);
             pop();
         }
         if (p > 1) {
@@ -234,8 +262,25 @@ class Splash {
 }
 
 class WaterWave {
+    radius;
+    x; z;
+    startT;
     constructor() {
+        this.radius = random(groundSize / 100, groundSize / 30);
+    }
 
+    init = (x, z) => {
+        this.startT = millis();
+        this.x = x;
+        this.z = z;
+    }
+
+    draw = () => {
+        let p = (millis() - this.startT) / splashTime;
+        let r = lerp(0, this.radius, p);
+        stroke(colorSet[C_RAIN]);
+        noFill();
+        xzCircle(this.x, -10, this.z, r);
     }
 }
 
@@ -249,7 +294,7 @@ function setup() {
     cam.lookAt(0, 0, 0);
     perspective(PI / 3.0, 1, 0.05, canvasSize*20);
 
-    background(colorSet[0]);
+    background(colorSet[C_DARK]);
 
     initPoints();
     initStatic();
@@ -259,7 +304,7 @@ function setup() {
 
 function initPoints() {
     for (let i = 0; i < circleRes; i++) {
-        let theta = i/24 * TWO_PI;
+        let theta = i/circleRes * TWO_PI;
         circlePoints.push([Math.cos(theta), Math.sin(theta)]);
     }
 }
@@ -267,7 +312,7 @@ function initPoints() {
 function initStatic() {
     groundSize = canvasSize * 4;
     ground = new Ground();
-    let cnt = random(3, 15);
+    let cnt = random(canMinCnt, canMaxCnt);
     for (let i = 0; i < cnt; i++) {
         let x = random(-groundSize/8, groundSize/8);
         let z = random(-groundSize/4, groundSize/6);
@@ -277,7 +322,7 @@ function initStatic() {
         while (true) {
             let collided = false;
             for (let j = 0; j < cans.length; j++) {
-                if (cans[j].canCollided(x, z, w + groundSize/25)) {
+                if (cans[j].canCollided(x, z, w + groundSize/30)) {
                     collided = true;
                     x = random(-groundSize/8, groundSize/8);
                     z = random(-groundSize/4, groundSize/6);
