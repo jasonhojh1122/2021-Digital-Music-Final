@@ -1,25 +1,25 @@
 let canvasSize;
 
 let colorBase = [
-    [
+    [   // blue
         [186, 39, 15],
         [186, 23, 35],
         [5, 78, 85],
         [90, 3, 85]
     ],
-    [
-        [338, 333, 45],
+    [   // pink
+        [338, 33, 45],
         [344, 33, 75],
-        [208, 20, 85],
+        [208, 25, 85],
         [349, 22, 97]
     ],
-    [
-        [84, 69, 20],
-        [73, 70, 35],
-        [22, 69, 70],
-        [67, 39, 80]
+    [   // green
+        [67, 98, 15],
+        [62, 85, 25],
+        [22, 70, 75],
+        [62, 83, 85]
     ],
-    [
+    [   // black
         [0, 0, 90],
         [0, 0, 65],
         [0, 0, 5],
@@ -39,9 +39,9 @@ let circlePoints = [];
 let ground;
 let groundSize;
 
-let canRes = 100;
+let canRes = 80;
 let canMinCnt = 3;
-let canMaxCnt = 15
+let canMaxCnt = 9
 let cans = [];
 
 let rainCnt = 1000;
@@ -51,6 +51,32 @@ let splashRes = 5;
 let splashTime = 500;
 
 let rains = [];
+
+let pdWrapper;
+let rainVolumeMultiplier = 4;
+let canVolumeMultiplier = 0.9;
+
+class PDWrapper {
+    patch;
+    constructor() {
+        this.patch = Pd.loadPatch('../patch/sound.pd');
+        Pd.start();
+        Pd.send('rainVolumeMultiplier', [rainVolumeMultiplier]);
+        Pd.send('canVolumeMultiplier', [canVolumeMultiplier]);
+    }
+
+    setRainVolume = (volume) => {
+        Pd.send('rainVolume', [volume]);
+    }
+
+    setCanFreq = (canID, freq) => {
+        Pd.send('canFreq_'.concat(canID.toString()), [freq]);
+    }
+
+    hitCan = (canID) => {
+        Pd.send('can_'.concat(canID.toString()), ['bang']);
+    }
+}
 
 class Ground {
     constructor() {
@@ -103,13 +129,12 @@ class Ground {
 }
 
 class Can {
-    constructor(x, z, w, h, pointSkip=1) {
+    constructor(x, z, w, h) {
         this.x = x;
         this.z = z;
         this.w = w;
         this.h = h;
         this.wSquare = w*w;
-        this.pointSkip = pointSkip;
         this.strokes = [];
         this.init();
     }
@@ -133,7 +158,7 @@ class Can {
         noFill();
         for (let i = 0; i < this.strokes.length; i++) {
             beginShape();
-            for (let j = 0; j < this.strokes[i].cnt; j += this.pointSkip) {
+            for (let j = 0; j < this.strokes[i].cnt; j++) {
                 let h = lerp(this.strokes[i].sh, this.strokes[i].eh, j / this.strokes[i].cnt);
                 let id = (this.strokes[i].sp + j) % circleRes;
                 vertex(circlePoints[id][0] * this.w + this.x, h, circlePoints[id][1] * this.w + this.z);
@@ -159,8 +184,8 @@ class Rain {
     constructor(startT) {
         this.startT = startT;
         this.init();
-        this.waterWave = new WaterWave();
-        this.splash = new Splash(this.onSplashEndCallback);
+        this.waterWave = new WaterWave(this.onAnimEndCallback);
+        this.splash = new Splash(this.onAnimEndCallback);
     }
 
     draw = () => {
@@ -173,9 +198,9 @@ class Rain {
         }
         else if (this.splashing) {
             this.splash.draw();
-            if (this.waving) {
-                this.waterWave.draw();
-            }
+        }
+        else if (this.waving) {
+            this.waterWave.draw();
         }
         else {
             this.init();
@@ -196,33 +221,31 @@ class Rain {
 
     checkCollision = () => {
         if (this.y >= 0) {
-            this.onCollision();
+            this.raining = false;
             this.waving = true;
             this.waterWave.init(this.x, this.z);
             return;
         }
         for (let i = 0; i < cans.length; i++) {
             if (cans[i].pointCollided(this.x, this.y, this.z)) {
-                this.onCollision();
+                this.raining = false;
+                this.splashing = true;
+                this.splash.init(this.x, this.y, this.z);
+                pdWrapper.hitCan(i);
                 break;
             }
         }
     }
 
-    onCollision = () => {
-        this.raining = false;
-        this.splashing = true;
-        this.splash.init(this.x, this.y, this.z);
-    }
-
-    onSplashEndCallback = () => {
+    onAnimEndCallback = () => {
         this.startT = millis() + random(0, 3000);
+        this.waving = false;
         this.splashing = false;
     }
 }
 
 class Splash {
-    direction; radius;
+    direction; radius; particleSize;
     x; y; z; h; startT;
     endCallback;
     constructor(endCallback) {
@@ -233,7 +256,8 @@ class Splash {
         this.radius = random(groundSize / 100, groundSize / 50);
         this.h = random(groundSize / 100, groundSize / 50);
         this.endCallback = endCallback;
-        this.init(0);
+        this.particleSize = canvasSize / 60;
+        this.init(0, 0, 0);
     }
 
     init = (x, y, z) => {
@@ -252,7 +276,7 @@ class Splash {
             noStroke();
             push();
             translate(this.x + this.direction[i][0] * r, y, this.z + this.direction[i][1] * r);
-            sphere(canvasSize / 150, 3, 3);
+            sphere(this.particleSize, 3, 3);
             pop();
         }
         if (p > 1) {
@@ -265,8 +289,10 @@ class WaterWave {
     radius;
     x; z;
     startT;
-    constructor() {
+    endCallback;
+    constructor(endCallback) {
         this.radius = random(groundSize / 100, groundSize / 30);
+        this.endCallback = endCallback;
     }
 
     init = (x, z) => {
@@ -281,9 +307,11 @@ class WaterWave {
         stroke(colorSet[C_RAIN]);
         noFill();
         xzCircle(this.x, -10, this.z, r);
+        if (p > 1) {
+            this.endCallback();
+        }
     }
 }
-
 
 function setup() {
     canvasSize = min(windowWidth, windowHeight);
@@ -296,6 +324,7 @@ function setup() {
 
     background(colorSet[C_DARK]);
 
+    pdWrapper = new PDWrapper();
     initPoints();
     initStatic();
     initRain();
@@ -333,6 +362,7 @@ function initStatic() {
             if (!collided) break;
         }
         cans.push(new Can(x, z, w, h, pointSkip))
+        pdWrapper.setCanFreq(i, lerp(80, 180, (w-canvasSize * 0.05) / (canvasSize * 0.05)));
     }
 }
 
@@ -361,8 +391,10 @@ function drawRain() {
 function draw() {
     drawStatic();
     drawRain();
-
-    rains[0].draw();
+    if (millis() < 4000)
+        pdWrapper.setRainVolume( lerp(0, 1, millis() / 4000) );
+    else
+        pdWrapper.setRainVolume( random(0.8, 1) );
 }
 
 function xzRectangle(x, y, z, xSize, zSize) {
