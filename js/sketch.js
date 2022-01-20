@@ -35,17 +35,30 @@ let bg;
 let circleRes = 24;
 let circlePoints = [];
 
-
 let ground;
 let groundSize;
 
 let canRes = 80;
 let canMinCnt = 3;
-let canMaxCnt = 9
+let canMaxCnt = 9;
 let cans = [];
+
+let drawReflection = true;
+let canReflectionLineCnt = 12;
+let canReflectionLineRes = 6;
+
+let angleLightY = Math.random() * 40 + 20;
+let angleLightX = Math.random() * 35 + 30;
 
 let rainCnt = 1000;
 let rainStartY;
+
+let thunder;
+let lightingLen = 150;
+let lightingThunderGap = 500;
+let thunderSoundLen = 6000;
+let minThunderGap = 8000 + thunderSoundLen;
+let maxThunderGap = 20000 + thunderSoundLen;
 
 let splashRes = 5;
 let splashTime = 500;
@@ -53,17 +66,9 @@ let splashTime = 500;
 let rains = [];
 
 let pdWrapper;
-let rainVolumeMultiplier = 4;
-let canVolumeMultiplier = 0.9;
 
 class PDWrapper {
-    patch;
-    constructor() {
-        this.patch = Pd.loadPatch('../patch/sound.pd');
-        Pd.start();
-        Pd.send('rainVolumeMultiplier', [rainVolumeMultiplier]);
-        Pd.send('canVolumeMultiplier', [canVolumeMultiplier]);
-    }
+    constructor() {}
 
     setRainVolume = (volume) => {
         Pd.send('rainVolume', [volume]);
@@ -75,6 +80,10 @@ class PDWrapper {
 
     hitCan = (canID) => {
         Pd.send('can_'.concat(canID.toString()), ['bang']);
+    }
+
+    thunder = () => {
+        Pd.send('thunder', ['bang']);
     }
 }
 
@@ -155,6 +164,7 @@ class Can {
 
     draw = () => {
         stroke(colorSet[C_CAN]);
+        strokeWeight(1);
         noFill();
         for (let i = 0; i < this.strokes.length; i++) {
             beginShape();
@@ -164,6 +174,27 @@ class Can {
                 vertex(circlePoints[id][0] * this.w + this.x, h, circlePoints[id][1] * this.w + this.z);
             }
             endShape(CLOSE);
+        }
+    }
+
+    drawReflection = () => {
+        let radius = this.h * Math.tan(radians(angleLightY));
+        let maxZ = radius * Math.sin(radians(angleLightX));
+        let maxXOffset = radius * Math.cos(radians(angleLightX));
+        noFill();
+        stroke(colorSet[C_RAIN]);
+        strokeWeight(1);
+        for (let i = 0; i < canReflectionLineCnt; i++) {
+            let p = i / canReflectionLineCnt;
+            let baseZ = lerp(0, -maxZ, p) + this.z;
+            let xOffset = lerp(0, maxXOffset, p);
+            beginShape();
+            for (let j = 0; j < canReflectionLineRes; j++) {
+                let lx = lerp(-this.w, this.w, j/canReflectionLineRes) + xOffset + this.x;
+                let lz = baseZ + random(-maxZ/35, maxZ/35);
+                vertex(lx, -1, lz);
+            }
+            endShape();
         }
     }
 
@@ -189,7 +220,9 @@ class Rain {
     }
 
     draw = () => {
+        strokeWeight(1);
         if (this.raining) {
+            strokeWeight(1);
             stroke(colorSet[C_RAIN]);
             line(this.x, this.y, this.z, this.x, this.y - this.len, this.z);
             this.y += (millis() - this.lastT) * this.speed / 1000;
@@ -313,10 +346,50 @@ class WaterWave {
     }
 }
 
+class Thunder {
+    z; eventT; waitT;
+    thundering; lighting;
+    constructor() {
+        this.z = canvasSize/10;
+        this.thundering = false;
+        this.lighting = false;
+        this.eventT = millis();
+        this.waitT = random(minThunderGap, maxThunderGap);
+    }
+
+    draw = () => {
+        if (this.lighting) {
+            fill(colorSet[C_DARK][0], colorSet[C_DARK][1], 90 ,0.6);
+            noStroke();
+            push();
+            translate(0, -40, this.z);
+            rotateX(HALF_PI);
+            plane(groundSize, groundSize);
+            pop();
+            if (millis() > this.eventT + lightingLen) {
+                this.lighting = false;
+                this.thundering = true;
+                this.eventT = millis();
+            }
+        }
+        else if (this.thundering && (millis() > this.eventT + lightingThunderGap)) {
+            pdWrapper.thunder();
+            this.thundering = false;
+            this.eventT = millis();
+            this.waitT = random(minThunderGap, maxThunderGap);
+        }
+        else if (millis() > this.eventT + this.waitT) {
+            this.lighting = true;
+            this.eventT = millis();
+        }
+    }
+
+}
+
 function setup() {
     canvasSize = min(windowWidth, windowHeight);
     createCanvas(canvasSize, canvasSize, WEBGL);
-    colorMode(HSB, 360, 100, 100);
+    colorMode(HSB, 360, 100, 100, 1);
     cam = createCamera();
     cam.move(0, -canvasSize * 1.4, canvasSize/10);
     cam.lookAt(0, 0, 0);
@@ -327,7 +400,7 @@ function setup() {
     pdWrapper = new PDWrapper();
     initPoints();
     initStatic();
-    initRain();
+    initWeather();
     drawStatic();
 }
 
@@ -370,27 +443,31 @@ function drawStatic() {
     ground.draw();
     cans.forEach( function(item) {
         item.draw();
+        if (drawReflection)
+            item.drawReflection();
     })
 }
 
-function initRain() {
+function initWeather() {
     rainStartY = -groundSize;
     for (let i = 0; i < rainCnt; i++) {
         rains.push(new Rain(random(i * 10, Math.min(i * 1000, 10000))));
     }
+    thunder = new Thunder();
 }
 
-function drawRain() {
+function drawWeather() {
     let t = millis();
     rains.forEach(function(item){
         if (item.startT < t)
             item.draw();
     })
+    thunder.draw();
 }
 
 function draw() {
     drawStatic();
-    drawRain();
+    drawWeather();
     if (millis() < 4000)
         pdWrapper.setRainVolume( lerp(0, 1, millis() / 4000) );
     else
